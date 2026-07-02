@@ -1,0 +1,92 @@
+name: NSE Smart Dashboard
+
+on:
+  schedule:
+    # 7:15 PM IST = 13:45 UTC (IST is UTC+5:30)
+    - cron: "45 13 * * 1-5"
+  workflow_dispatch:   # allow manual trigger from GitHub UI
+
+jobs:
+  run-dashboard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to commit output files
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create output directories
+        run: mkdir -p output history/logs
+
+      - name: Restore SQLite history
+        uses: actions/cache@v4
+        with:
+          path: history/nse_history.db
+          key: nse-history-db-${{ github.run_number }}
+          restore-keys: |
+            nse-history-db-
+
+      - name: Run NSE Dashboard
+        run: python main.py
+
+      - name: Commit updated outputs
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add output/NSE_Dashboard.xlsx output/index.html history/logs/
+          git diff --staged --quiet || git commit -m "📊 Dashboard update $(TZ='Asia/Kolkata' date '+%Y-%m-%d %H:%M IST')"
+          git push
+
+      - name: Upload Excel as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NSE-Dashboard-${{ github.run_number }}
+          path: output/NSE_Dashboard.xlsx
+          retention-days: 30
+
+      - name: Upload HTML as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NSE-HTML-${{ github.run_number }}
+          path: output/index.html
+          retention-days: 30
+
+  deploy-pages:
+    needs: run-dashboard
+    runs-on: ubuntu-latest
+    permissions:
+      pages:   write
+      id-token: write
+      contents: read
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main   # use freshly committed output
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload to Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: output/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
